@@ -1,0 +1,401 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>爱心图云</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="container">
+    <canvas id="heartCanvas"></canvas>
+    <div class="status">点击切换：爱心图云 ↔ 图片流</div>
+  </div>
+  <script src="script.js"></script>
+</body>
+</html>
+
+<style>
+body {
+  margin: 0;
+  height: 100vh;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  background: #f0f2f5;
+  font-family: 'Arial', sans-serif;
+  overflow: hidden;
+}
+.container {
+  position: relative;
+  width: 80%;
+  max-width: 1200px;
+  height: 100%;
+}
+#heartCanvas {
+  width: 100%;
+  height: 100%;
+  background: #fff;
+  cursor: pointer;
+  display: block;
+}
+.status {
+  text-align: center;
+  margin-top: 20px;
+  color: #e74c3c;
+  font-weight: bold;
+  position: absolute;
+  bottom: 20px;
+  left: 0;
+  right: 0;
+}
+</style>
+
+<script>
+// === 新增：配置图片路径前缀 ===
+const THUMB_BASE = 'images/thumb/'; // 图云用的小图
+const FULL_BASE = 'images/full1/';   // 瀑布流用的原图
+
+// 存储图片编号
+const imageIds = [];
+for (let i = 1; i <= 200; i++) {
+  imageIds.push(i);
+}
+
+// === 新增：生成爱心图云用的图片索引数组（数量×3） ===
+function generateHeartImageIndices() {
+  const indices = [];
+  const totalImages = imageIds.length;
+  const multiplier = 4; // 重复4次
+  
+  // 方法1：简单重复4次
+  for (let repeat = 0; repeat < multiplier; repeat++) {
+    for (let i = 0; i < totalImages; i++) {
+      indices.push(imageIds[i]);
+    }
+  }
+  
+  // 打乱顺序，让图片分布更随机
+  for (let i = indices.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [indices[i], indices[j]] = [indices[j], indices[i]];
+  }
+  
+  return indices;
+}
+
+// 生成爱心图云用的图片索引（600个）
+const heartImageIndices = generateHeartImageIndices();
+
+// 生成带前导零的文件名
+function formatImageName(id) {
+  return id.toString().padStart(3, '0');
+}
+
+// Canvas初始化
+const canvas = document.getElementById('heartCanvas');
+const ctx = canvas.getContext('2d');
+canvas.width = window.innerWidth * 0.8;
+canvas.height = window.innerHeight * 0.8;
+
+// 状态：true=爱心，false=流式
+let isHeart = true;
+
+// === 爱心坐标点缓存 ===
+let heartPoints = null;
+
+// === 修复：使用正确的爱心参数方程，支持垂直压缩 ===
+function isPointInHeart(x, y, centerX, centerY, scale, verticalCompression = 0.8) {
+  // 转换为爱心坐标系
+  const tx = (x - centerX) / scale;
+  const ty = (y - centerY) / (scale * verticalCompression); // 垂直方向应用压缩
+  
+  // 爱心参数方程 (x^2 + y^2 - 1)^3 - x^2 * y^3 <= 0
+  const x2 = tx * tx;
+  const y2 = ty * ty;
+  const y3 = ty * y2;
+  
+  return Math.pow(x2 + y2 - 1, 3) - x2 * y3 <= 0;
+}
+
+// === 修复：生成爱心坐标函数 ===
+function generateHeartPoints(count) {
+  if (heartPoints && heartPoints.length === count) {
+    return heartPoints; // 如果已经生成过，直接返回
+  }
+  
+  const points = [];
+  const centerX = canvas.width / 2;
+  const centerY = canvas.height / 2;
+  const scale = Math.min(canvas.width, canvas.height) * 0.4; // 自适应大小
+  
+  // 方法1：在爱心区域内均匀采样
+  const attempts = count * 10; // 尝试次数
+  const bounds = {
+    minX: centerX - scale * 1.5,
+    maxX: centerX + scale * 1.5,
+    minY: centerY - scale * 1.5,
+    maxY: centerY + scale * 1.5
+  };
+  
+  // 生成内部点
+  for (let i = 0; points.length < count && i < attempts; i++) {
+    const x = bounds.minX + Math.random() * (bounds.maxX - bounds.minX);
+    const y = bounds.minY + Math.random() * (bounds.maxY - bounds.minY);
+    
+    if (isPointInHeart(x, y, centerX, centerY, scale)) {
+      // 添加轻微随机偏移，避免过于整齐
+      const offsetX = (Math.random() - 0.5) * 5;
+      const offsetY = (Math.random() - 0.5) * 5;
+       // 垂直翻转：centerY - (y - centerY) = 2*centerY - y
+      const flippedY = 2 * centerY - (y + offsetY); // 添加垂直翻转
+      points.push({ x: x + offsetX, y: flippedY });
+
+    }
+  }
+  
+  // 如果内部点不够，生成边界点
+  if (points.length < count) {
+    const remaining = count - points.length;
+    
+    // 使用参数方程生成爱心边界点
+    for (let i = 0; i < remaining; i++) {
+      const t = Math.random() * Math.PI * 2;
+      
+      // 爱心参数方程
+      const x = 16 * Math.pow(Math.sin(t), 3);
+      const y = 13 * Math.cos(t) - 5 * Math.cos(2*t) - 2 * Math.cos(3*t) - Math.cos(4*t);
+      
+      // 缩放和平移
+      const scaleFactor = scale / 20; // 调整缩放因子
+      const px = centerX + x * scaleFactor;
+      const py = centerY - y * scaleFactor; // 注意：这里用减号，因为爱心需要正过来
+      
+      points.push({ x: px, y: py });
+    }
+  }
+  
+  // 打乱顺序
+  for (let i = points.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [points[i], points[j]] = [points[j], points[i]];
+  }
+  
+  // 缓存结果
+  heartPoints = points;
+  return points;
+}
+
+// 存储已加载的图片
+const loadedImages = new Map();
+
+// === 修复：优化渲染函数 - 移除动画循环 ===
+function renderHeart() {
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  
+  
+  // 使用 heartImageIndices (600个) 而不是 imageIds (200个)
+  const points = generateHeartPoints(heartImageIndices.length);
+  
+  // 绘制图片
+  heartImageIndices.forEach((id, i) => {
+    const point = points[i];
+    if (!point) return;
+    
+    // 如果图片已加载，直接绘制
+    if (loadedImages.has(id)) {
+      const img = loadedImages.get(id);
+      drawImageAtPoint(img, point);
+    } else {
+      // 异步加载图片
+      const img = new Image();
+      img.src = `${THUMB_BASE}${formatImageName(id)}.jpg`;
+      img.onload = () => {
+        loadedImages.set(id, img);
+        drawImageAtPoint(img, point);
+      };
+      img.onerror = () => {
+        console.warn(`图片加载失败: ${img.src}`);
+        drawPlaceholder(point);
+      };
+    }
+  });
+  
+  // 恢复画布状态
+  ctx.restore();
+}
+
+// 辅助函数：绘制图片到指定点
+function drawImageAtPoint(img, point) {
+  // 爱心模式中图片稍小，因为数量变多了
+  const maxWidth = 20; // 从30减小到20，因为图片更多了
+  const scale = Math.min(maxWidth / img.width, 1);
+  const drawWidth = img.width * scale;
+  const drawHeight = img.height * scale;
+  
+  // 移除动画效果，只绘制静态图片
+  ctx.drawImage(
+    img, 
+    point.x - drawWidth / 2, 
+    point.y - drawHeight / 2, 
+    drawWidth, 
+    drawHeight
+  );
+}
+
+// 辅助函数：绘制占位符
+function drawPlaceholder(point) {
+  ctx.fillStyle = '#eee';
+  ctx.fillRect(point.x - 10, point.y - 10, 20, 20);
+  ctx.strokeStyle = '#ccc';
+  ctx.strokeRect(point.x - 10, point.y - 10, 20, 20);
+}
+
+// 辅助函数：绘制爱心轮廓（调试用）
+function drawHeartOutline() {
+  const centerX = canvas.width / 2;
+  const centerY = canvas.height / 2;
+  const scale = Math.min(canvas.width, canvas.height) * 0.25;
+  
+  ctx.save();
+  ctx.strokeStyle = 'rgba(231, 76, 60, 0.2)';
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  
+  // 绘制爱心轮廓
+  for (let t = 0; t <= Math.PI * 2; t += 0.01) {
+    const x = 16 * Math.pow(Math.sin(t), 3);
+    const y = 13 * Math.cos(t) - 5 * Math.cos(2*t) - 2 * Math.cos(3*t) - Math.cos(4*t);
+    
+    const px = centerX + x * scale / 20;
+    const py = centerY - y * scale / 20;
+    
+    if (t === 0) {
+      ctx.moveTo(px, py);
+    } else {
+      ctx.lineTo(px, py);
+    }
+  }
+  
+  ctx.closePath();
+  ctx.stroke();
+  ctx.restore();
+}
+
+// 预加载图片（可选，提高性能）
+function preloadImages() {
+  // 只预加载200张图片，因为爱心图云会重复使用这些图片
+  imageIds.forEach(id => {
+    if (!loadedImages.has(id)) {
+      const img = new Image();
+      img.src = `${THUMB_BASE}${formatImageName(id)}.jpg`;
+      img.onload = () => loadedImages.set(id, img);
+      // 可选：也可以预加载瀑布流的大图
+      const fullImg = new Image();
+      fullImg.src = `${FULL_BASE}${formatImageName(id)}.jpg`;
+    }
+  });
+}
+
+// 瀑布流渲染
+let scrollOffset = 0;
+const columnWidth = 300;
+const gap = 10;
+const columns = Math.floor(canvas.width / (columnWidth + gap));
+let columnHeights = new Array(columns).fill(0);
+
+function renderStream() {
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  columnHeights = new Array(columns).fill(0);
+
+  const totalWidth = columns * columnWidth + (columns - 1) * gap;
+  const startX = (canvas.width - totalWidth) / 2;
+
+  // 重置滚动位置
+  if (isHeart) {
+    scrollOffset = 0;
+  }
+
+  // 瀑布流仍然使用原始的200张图片
+  imageIds.forEach((id, i) => {
+    const img = loadedImages.get(id) || new Image();
+    
+    if (img.complete && img.naturalHeight !== 0) {
+      // 图片已加载
+      drawStreamImage(img, id, i, startX);
+    } else {
+      // 异步加载
+      img.src = `${FULL_BASE}${formatImageName(id)}.jpg`;
+      img.onload = () => {
+        loadedImages.set(id, img);
+        drawStreamImage(img, id, i, startX);
+      };
+    }
+  });
+}
+
+function drawStreamImage(img, id, index, startX) {
+  const colIndex = index % columns;
+  const x = startX + colIndex * (columnWidth + gap);
+  const y = columnHeights[colIndex] + gap / 2;
+
+  const scale = columnWidth / img.width;
+  const drawWidth = img.width * scale;
+  const drawHeight = img.height * scale;
+
+  // 检查图片是否在可视区域内
+  if (y + drawHeight > scrollOffset && y < scrollOffset + canvas.height) {
+    ctx.drawImage(img, x, y - scrollOffset, drawWidth, drawHeight);
+  }
+
+  columnHeights[colIndex] = y + drawHeight + gap / 2;
+}
+
+// 滚轮事件
+canvas.addEventListener('wheel', (e) => {
+  e.preventDefault();
+  if (!isHeart) {
+    scrollOffset += e.deltaY * 0.5;
+    if (scrollOffset < 0) scrollOffset = 0;
+    
+    // 限制最大滚动
+    const maxScroll = Math.max(...columnHeights) - canvas.height;
+    if (scrollOffset > maxScroll) scrollOffset = maxScroll;
+    
+    renderStream();
+  }
+});
+
+// 点击切换
+canvas.addEventListener('click', () => {
+  isHeart = !isHeart;
+  document.querySelector('.status').textContent = isHeart 
+    ? '点击切换：爱心图云 ↔ 图片流' 
+    : '点击恢复爱心图云';
+  
+  if (isHeart) {
+    renderHeart();
+  } else {
+    renderStream();
+  }
+});
+
+// 窗口大小改变时重置
+window.addEventListener('resize', () => {
+  canvas.width = window.innerWidth * 0.8;
+  canvas.height = window.innerHeight * 0.8;
+  
+  // 清除爱心点缓存，因为画布大小改变了
+  heartPoints = null;
+  
+  if (isHeart) {
+    renderHeart();
+  } else {
+    renderStream();
+  }
+});
+
+// 初始加载
+window.onload = () => {
+  preloadImages();
+  renderHeart();
+};
+</script>
