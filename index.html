@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html>
 <head>
-  <title>爱心图云</title>
+  <title>致周怡萍</title>
   <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -11,7 +11,7 @@
     
     <!-- 主画布（初始隐藏） -->
     <canvas id="heartCanvas" style="opacity: 0; transition: opacity 1s ease;"></canvas>
-    <div class="status">点击切换：爱心图云 ↔ 图片流</div>
+    <div class="status"></div>
   </div>
   <script src="https://code.jquery.com/jquery-3.2.1.min.js"></script>
   <script src="script.js"></script>
@@ -45,7 +45,7 @@ body {
 .status {
   text-align: center;
   margin-top: 20px;
-  color: #e74c3c;
+  color: #fc85fc;
   font-weight: bold;
   position: absolute;
   bottom: 20px;
@@ -306,10 +306,11 @@ var heartAnimation = (function() {
   };
 })();
 
-// === 第二部分：你的爱心图云和瀑布流代码 ===
+// === 第二部分：你的爱心图云和瀑布流代码（添加海浪效果）===
 // === 新增：配置图片路径前缀 ===
-const THUMB_BASE = 'images/thumb/'; // 图云用的小图
-const FULL_BASE = 'images/full1/';   // 瀑布流用的原图
+const THUMB_BASE = 'images/thumb/';     // 小图（爱心图云用）
+const FULL_BASE = 'images/full1/';      // 原始大图
+const STREAM_BASE = 'images/full2/';   // 新增：专为瀑布流优化的中等质量图
 
 // 存储图片编号
 const imageIds = [];
@@ -321,7 +322,7 @@ for (let i = 1; i <= 200; i++) {
 function generateHeartImageIndices() {
   const indices = [];
   const totalImages = imageIds.length;
-  const multiplier = 4; // 重复4次
+  const multiplier = 5; // 重复4次
   
   // 方法1：简单重复4次
   for (let repeat = 0; repeat < multiplier; repeat++) {
@@ -352,9 +353,30 @@ const canvas = document.getElementById('heartCanvas');
 const ctx = canvas.getContext('2d');
 canvas.width = window.innerWidth * 0.8;
 canvas.height = window.innerHeight * 0.8;
+ctx.imageSmoothingEnabled = true;
+ctx.imageSmoothingQuality = 'high';
 
 // 状态：true=爱心，false=流式
 let isHeart = true;
+
+// === 新增：海浪效果相关变量 ===
+let waveAnimationId = null;
+let waveStartTime = 0;
+let isWaveActive = false;
+let waveProgress = 0; // 0到1之间，表示波浪进度
+let lastWaveTime = 0; // 上次波浪开始时间
+
+// 海浪效果参数配置
+const waveConfig = {
+  interval: 5000,       // 5秒一次
+  duration: 2000,       // 波浪持续时间2秒
+  amplitude: 15,        // 波浪振幅（像素）
+  frequency: 0.03,      // 波浪频率
+  speed: 0.8,           // 波浪传播速度
+  color: 'rgba(255, 102, 255, 0.3)', // 波浪颜色
+  showWaveLine: true,   // 是否显示波浪线
+  waveEffect: true      // 是否启用波浪效果
+};
 
 // === 爱心坐标点缓存 ===
 let heartPoints = null;
@@ -402,10 +424,14 @@ function generateHeartPoints(count) {
       // 添加轻微随机偏移，避免过于整齐
       const offsetX = (Math.random() - 0.5) * 5;
       const offsetY = (Math.random() - 0.5) * 5;
-       // 垂直翻转：centerY - (y - centerY) = 2*centerY - y
+      // 垂直翻转：centerY - (y - centerY) = 2*centerY - y
       const flippedY = 2 * centerY - (y + offsetY); // 添加垂直翻转
-      points.push({ x: x + offsetX, y: flippedY });
-
+      points.push({ 
+        x: x + offsetX, 
+        y: flippedY,
+        originalY: flippedY, // 保存原始Y坐标
+        originalX: x + offsetX // 保存原始X坐标
+      });
     }
   }
   
@@ -426,7 +452,12 @@ function generateHeartPoints(count) {
       const px = centerX + x * scaleFactor;
       const py = centerY - y * scaleFactor; // 注意：这里用减号，因为爱心需要正过来
       
-      points.push({ x: px, y: py });
+      points.push({ 
+        x: px, 
+        y: py,
+        originalY: py,
+        originalX: px
+      });
     }
   }
   
@@ -444,75 +475,230 @@ function generateHeartPoints(count) {
 // 存储已加载的图片
 const loadedImages = new Map();
 
-// === 修复：优化渲染函数 - 移除动画循环 ===
+// === 新增：计算海浪偏移 ===
+function calculateWaveOffset(point, currentTime) {
+  if (!isWaveActive || !waveConfig.waveEffect) return 0;
+  
+  // 计算波浪进度（0到1）
+  const elapsed = currentTime - waveStartTime;
+  waveProgress = Math.min(elapsed / waveConfig.duration, 1);
+  
+  // 如果波浪已经结束
+  if (waveProgress >= 1) {
+    isWaveActive = false;
+    return 0;
+  }
+  
+  // 计算波浪当前位置（从上到下，0到1）
+  const wavePosition = waveProgress * 1.2 - 0.1; // 稍微扩展范围，确保覆盖整个爱心
+  
+  // 计算该点相对于波浪位置的距离
+  // 将点的y坐标归一化到0-1范围（从上到下）
+  const normalizedY = 1 - (point.originalY / canvas.height);
+  
+  // 计算点到波浪前沿的距离
+  const distanceToWave = normalizedY - wavePosition;
+  
+  // 如果点在波浪后面（已经经过），或者太远（还没到达），则没有偏移
+  if (distanceToWave > 0.2 || distanceToWave < -0.1) {
+    return 0;
+  }
+  
+  // 使用正弦波计算偏移量
+  // distanceToWave为负表示点在波浪前方，正值表示在波浪后方
+  const waveOffset = Math.sin(
+    -distanceToWave * Math.PI * 10 + // 波浪形状
+    point.originalX * waveConfig.frequency + // 根据x坐标添加水平变化
+    waveProgress * Math.PI * 2 * waveConfig.speed // 波浪随时间移动
+  );
+  
+  // 应用衰减：越靠近波浪中心，影响越大
+  const attenuation = Math.exp(-Math.abs(distanceToWave) * 10);
+  
+  // 应用波浪进度：波浪开始时和结束时振幅较小
+  const progressFactor = 1 - Math.pow(2 * waveProgress - 1, 2); // 抛物线形状，中间高两边低
+  
+  return waveOffset * waveConfig.amplitude * attenuation * progressFactor;
+}
+
+// === 新增：绘制波浪线 ===
+function drawWaveLine(currentTime) {
+  if (!waveConfig.showWaveLine || !isWaveActive || !waveConfig.waveEffect) return;
+  
+  const elapsed = currentTime - waveStartTime;
+  const progress = Math.min(elapsed / waveConfig.duration, 1);
+  
+  // 计算波浪线位置（从上到下）
+  const waveY = progress * canvas.height * 1.2 - canvas.height * 0.1;
+  
+  // 如果波浪线在画布外，不绘制
+  if (waveY < -10 || waveY > canvas.height + 10) return;
+  
+  ctx.save();
+  
+  // 绘制波浪线
+  ctx.beginPath();
+  ctx.moveTo(0, waveY);
+  
+  // 绘制波浪形状
+  for (let x = 0; x <= canvas.width; x += 10) {
+    const y = waveY + Math.sin(
+      x * waveConfig.frequency * 0.5 + 
+      progress * Math.PI * 2 * waveConfig.speed
+    ) * 5;
+    ctx.lineTo(x, y);
+  }
+  
+  ctx.strokeStyle = waveConfig.color;
+  ctx.lineWidth = 2;
+  ctx.stroke();
+  
+  // 绘制波浪线前端的光晕
+  const gradient = ctx.createRadialGradient(
+    canvas.width / 2, waveY, 0,
+    canvas.width / 2, waveY, canvas.width / 3
+  );
+  gradient.addColorStop(0, 'rgba(64, 169, 255, 0.2)');
+  gradient.addColorStop(1, 'rgba(64, 169, 255, 0)');
+  
+  ctx.fillStyle = gradient;
+  ctx.fillRect(0, waveY - 30, canvas.width, 60);
+  
+  ctx.restore();
+}
+
+// === 新增：启动波浪效果 ===
+function startWave() {
+  isWaveActive = true;
+  waveStartTime = Date.now();
+  waveProgress = 0;
+  lastWaveTime = waveStartTime;
+}
+
+// === 修复：优化渲染函数 - 添加海浪效果 ===
 function renderHeart() {
+  const currentTime = Date.now();
+  
+  // 检查是否需要启动新的波浪（每5秒一次）
+  if (!isWaveActive && waveConfig.waveEffect && currentTime - lastWaveTime > waveConfig.interval) {
+    startWave();
+  }
+  
   ctx.clearRect(0, 0, canvas.width, canvas.height);
   
   // 使用 heartImageIndices (600个) 而不是 imageIds (200个)
   const points = generateHeartPoints(heartImageIndices.length);
+  
+  // 绘制波浪线
+  drawWaveLine(currentTime);
   
   // 绘制图片
   heartImageIndices.forEach((id, i) => {
     const point = points[i];
     if (!point) return;
     
+    // 计算波浪偏移
+    const waveOffset = calculateWaveOffset(point, currentTime);
+    
     // 如果图片已加载，直接绘制
     if (loadedImages.has(id)) {
       const img = loadedImages.get(id);
-      drawImageAtPoint(img, point);
+      drawImageAtPoint(img, point, waveOffset);
     } else {
       // 异步加载图片
       const img = new Image();
       img.src = `${THUMB_BASE}${formatImageName(id)}.jpg`;
       img.onload = () => {
         loadedImages.set(id, img);
-        drawImageAtPoint(img, point);
+        drawImageAtPoint(img, point, waveOffset);
       };
       img.onerror = () => {
         console.warn(`图片加载失败: ${img.src}`);
-        drawPlaceholder(point);
+        drawPlaceholder(point, waveOffset);
       };
     }
   });
+  
+  // 在爱心模式下，继续动画循环
+  if (isHeart) {
+    waveAnimationId = requestAnimationFrame(renderHeart);
+  }
 }
 
-// 辅助函数：绘制图片到指定点
-function drawImageAtPoint(img, point) {
+// 辅助函数：绘制图片到指定点（添加波浪偏移）
+function drawImageAtPoint(img, point, waveOffset = 0) {
   // 爱心模式中图片稍小，因为数量变多了
   const maxWidth = 20; // 从30减小到20，因为图片更多了
   const scale = Math.min(maxWidth / img.width, 1);
   const drawWidth = img.width * scale;
   const drawHeight = img.height * scale;
   
-  // 移除动画效果，只绘制静态图片
+  // 应用波浪偏移
+  const yOffset = point.y + waveOffset;
+  
+  // 保存画布状态
+  ctx.save();
+  
+  // 如果存在波浪偏移，添加轻微的颜色效果
+  if (Math.abs(waveOffset) > 0.5 && waveConfig.waveEffect) {
+    // 根据偏移方向添加蓝色或青色色调
+    const hue = waveOffset > 0 ? 200 : 180; // 蓝色或青色
+    const alpha = Math.min(Math.abs(waveOffset) / waveConfig.amplitude, 0.3);
+    
+    // 应用颜色叠加
+    ctx.globalCompositeOperation = 'overlay';
+    ctx.fillStyle = `hsla(${hue}, 70%, 60%, ${alpha})`;
+    ctx.fillRect(
+      point.x - drawWidth / 2 - 2,
+      yOffset - drawHeight / 2 - 2,
+      drawWidth + 4,
+      drawHeight + 4
+    );
+    
+    // 恢复合成模式
+    ctx.globalCompositeOperation = 'source-over';
+  }
+  
+  // 绘制图片
   ctx.drawImage(
     img, 
     point.x - drawWidth / 2, 
-    point.y - drawHeight / 2, 
+    yOffset - drawHeight / 2, 
     drawWidth, 
     drawHeight
   );
+  
+  ctx.restore();
 }
 
-// 辅助函数：绘制占位符
-function drawPlaceholder(point) {
+// 辅助函数：绘制占位符（添加波浪偏移）
+function drawPlaceholder(point, waveOffset = 0) {
+  const yOffset = point.y + waveOffset;
   ctx.fillStyle = '#eee';
-  ctx.fillRect(point.x - 10, point.y - 10, 20, 20);
+  ctx.fillRect(point.x - 10, yOffset - 10, 20, 20);
   ctx.strokeStyle = '#ccc';
-  ctx.strokeRect(point.x - 10, point.y - 10, 20, 20);
+  ctx.strokeRect(point.x - 10, yOffset - 10, 20, 20);
 }
 
 // 预加载图片（可选，提高性能）
 function preloadImages() {
-  // 只预加载200张图片，因为爱心图云会重复使用这些图片
   imageIds.forEach(id => {
     if (!loadedImages.has(id)) {
-      const img = new Image();
-      img.src = `${THUMB_BASE}${formatImageName(id)}.jpg`;
-      img.onload = () => loadedImages.set(id, img);
-      // 可选：也可以预加载瀑布流的大图
-      const fullImg = new Image();
-      fullImg.src = `${FULL_BASE}${formatImageName(id)}.jpg`;
+      // 爱心图云用小图
+      const thumbImg = new Image();
+      thumbImg.src = `${THUMB_BASE}${formatImageName(id)}.jpg`;
+      thumbImg.onload = () => loadedImages.set(id, thumbImg);
+      
+      // 瀑布流用高质量图片（新增）
+      // 如果你有STREAM_BASE目录下的优化图片，就用这个
+      const streamImg = new Image();
+      // 两种选择：
+      // 1. 使用专为瀑布流优化的中等大小图片
+      // streamImg.src = `${STREAM_BASE}${formatImageName(id)}.jpg`;
+      // 2. 或者继续使用原始图片但加载时设置更高的质量
+      streamImg.src = `${FULL_BASE}${formatImageName(id)}.jpg`;
+      // 为streamImg添加一个标识，以便在瀑布流中使用
+      streamImg._isForStream = true;
     }
   });
 }
@@ -538,20 +724,24 @@ function renderStream() {
 
   // 瀑布流仍然使用原始的200张图片
   imageIds.forEach((id, i) => {
-    const img = loadedImages.get(id) || new Image();
-    
-    if (img.complete && img.naturalHeight !== 0) {
-      // 图片已加载
+  // 优先使用瀑布流专用图片
+  let img = loadedImages.get(`stream_${id}`);
+  
+  if (!img) {
+    // 如果没有专用图片，使用原始图片
+    img = loadedImages.get(id) || new Image();
+    img.src = `${FULL_BASE}${formatImageName(id)}.jpg`;
+    loadedImages.set(id, img);
+  }
+  
+  if (img.complete && img.naturalHeight !== 0) {
+    drawStreamImage(img, id, i, startX);
+  } else {
+    img.onload = () => {
       drawStreamImage(img, id, i, startX);
-    } else {
-      // 异步加载
-      img.src = `${FULL_BASE}${formatImageName(id)}.jpg`;
-      img.onload = () => {
-        loadedImages.set(id, img);
-        drawStreamImage(img, id, i, startX);
-      };
-    }
-  });
+    };
+  }
+});
 }
 
 function drawStreamImage(img, id, index, startX) {
@@ -560,12 +750,21 @@ function drawStreamImage(img, id, index, startX) {
   const y = columnHeights[colIndex] + gap / 2;
 
   const scale = columnWidth / img.width;
-  const drawWidth = img.width * scale;
-  const drawHeight = img.height * scale;
+  const drawWidth = Math.round(img.width * scale);
+  const drawHeight = Math.round(img.height * scale);
 
-  // 检查图片是否在可视区域内
   if (y + drawHeight > scrollOffset && y < scrollOffset + canvas.height) {
-    ctx.drawImage(img, x, y - scrollOffset, drawWidth, drawHeight);
+    // 启用高质量渲染
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = 'high';
+    
+    ctx.drawImage(
+      img, 
+      Math.round(x), 
+      Math.round(y - scrollOffset), 
+      drawWidth, 
+      drawHeight
+    );
   }
 
   columnHeights[colIndex] = y + drawHeight + gap / 2;
@@ -586,7 +785,7 @@ canvas.addEventListener('wheel', (e) => {
   }
 });
 
-// 点击切换
+// === 修改：点击切换 - 管理动画循环 ===
 canvas.addEventListener('click', () => {
   isHeart = !isHeart;
   document.querySelector('.status').textContent = isHeart 
@@ -594,11 +793,37 @@ canvas.addEventListener('click', () => {
     : '点击恢复爱心图云';
   
   if (isHeart) {
-    renderHeart();
+    // 切换到爱心模式，开始动画循环（包含海浪效果）
+    startHeartAnimation();
   } else {
+    // 切换到瀑布流模式，停止动画循环
+    stopHeartAnimation();
     renderStream();
   }
 });
+
+// 启动爱心动画（包含海浪效果）
+function startHeartAnimation() {
+  if (waveAnimationId) {
+    cancelAnimationFrame(waveAnimationId);
+  }
+  
+  // 初始化波浪效果
+  waveStartTime = Date.now();
+  lastWaveTime = waveStartTime - waveConfig.interval + 1000; // 1秒后开始第一次波浪
+  
+  // 开始动画循环
+  waveAnimationId = requestAnimationFrame(renderHeart);
+}
+
+// 停止爱心动画
+function stopHeartAnimation() {
+  if (waveAnimationId) {
+    cancelAnimationFrame(waveAnimationId);
+    waveAnimationId = null;
+  }
+  isWaveActive = false;
+}
 
 // 窗口大小改变时重置
 window.addEventListener('resize', () => {
@@ -609,7 +834,7 @@ window.addEventListener('resize', () => {
   heartPoints = null;
   
   if (isHeart) {
-    renderHeart();
+    startHeartAnimation();
   } else {
     renderStream();
   }
@@ -637,8 +862,8 @@ function switchToMainInterface() {
     // 隐藏动态爱心画布
     pinkboard.style.display = 'none';
     
-    // 渲染爱心图云
-    renderHeart();
+    // 启动爱心动画（包含海浪效果）
+    startHeartAnimation();
   }, 500);
 }
 
