@@ -255,6 +255,12 @@ var heartAnimation = (function() {
       image.src = canvas.toDataURL();
       return image;
     })();
+
+     // === 新增：添加渐入渐出文字效果变量 ===
+  let textOpacity = 0;
+  let textFadeDirection = 1; // 1表示淡入，-1表示淡出
+  let textShowTime = 0;
+  const maxTextOpacity = 0.8;
     
     // 渲染函数
     function render() {
@@ -276,8 +282,36 @@ var heartAnimation = (function() {
       
       particles.update(deltaTime);
       particles.draw(context, image);
+
+
+    // === 新增：绘制爱心下方的文字 ===
+    textShowTime += deltaTime;
+    // 控制文字淡入淡出
+    if (textShowTime > 1.0) { // 1秒后开始淡入
+      textOpacity += deltaTime * 0.5 * textFadeDirection;
     }
     
+    // 绘制文字
+    context.save();
+    context.globalAlpha = textOpacity;
+    context.textAlign = 'center';
+    context.textBaseline = 'middle';
+    
+    // 第一行文字
+    context.font = 'bold 24px Arial, sans-serif';
+    context.fillStyle = '#ff6b9d';
+    context.fillText('致周怡萍', canvas.width / 2, canvas.height / 2 + 240);
+    
+    // 第二行提示文字
+    context.font = 'bold 18px Arial, sans-serif';
+    context.fillStyle = '#ff9acd';
+    context.fillText('少女祈祷中', canvas.width / 2, canvas.height / 2 + 290);
+    
+    // 第三行倒计时文字
+    
+    
+    context.restore();
+  }
     // 调整画布大小
     function onResize() {
       canvas.width = canvas.clientWidth;
@@ -308,9 +342,9 @@ var heartAnimation = (function() {
 
 // === 第二部分：你的爱心图云和瀑布流代码（添加海浪效果）===
 // === 新增：配置图片路径前缀 ===
-const THUMB_BASE = 'images/thumb/';     // 小图（爱心图云用）
-const FULL_BASE = 'images/full1/';      // 原始大图
-const STREAM_BASE = 'images/full2/';   // 新增：专为瀑布流优化的中等质量图
+const THUMB_BASE = '/images/thumb/';     // 小图（爱心图云用）
+const FULL_BASE = '/images/full1/';      // 原始大图
+const STREAM_BASE = '/images/full2/';   // 新增：专为瀑布流优化的中等质量图
 
 // 存储图片编号
 const imageIds = [];
@@ -325,7 +359,7 @@ function generateHeartImageIndices() {
   const multiplier = 5; // 重复4次
   
   // 方法1：简单重复4次
-  for (let repeat = 0; repeat < multiplier; repeat++) {
+  for (let repeat = 0; repeat <= multiplier; repeat++) {
     for (let i = 0; i < totalImages; i++) {
       indices.push(imageIds[i]);
     }
@@ -368,7 +402,7 @@ let lastWaveTime = 0; // 上次波浪开始时间
 
 // 海浪效果参数配置
 const waveConfig = {
-  interval: 5000,       // 5秒一次
+  interval: 4000,       // 5秒一次
   duration: 2000,       // 波浪持续时间2秒
   amplitude: 15,        // 波浪振幅（像素）
   frequency: 0.03,      // 波浪频率
@@ -710,6 +744,13 @@ const gap = 10;
 const columns = Math.floor(canvas.width / (columnWidth + gap));
 let columnHeights = new Array(columns).fill(0);
 
+// === 新增：瀑布流自动滚动相关变量 ===
+let autoScrollAnimationId = null;
+let autoScrollSpeed = 60; // 滚动速度（像素/秒）
+let autoScrollEnabled = false;
+let lastManualScrollTime = 0;
+const autoScrollDelay = 3000; // 手动滚动后3秒恢复自动滚动
+
 function renderStream() {
   ctx.clearRect(0, 0, canvas.width, canvas.height);
   columnHeights = new Array(columns).fill(0);
@@ -717,31 +758,103 @@ function renderStream() {
   const totalWidth = columns * columnWidth + (columns - 1) * gap;
   const startX = (canvas.width - totalWidth) / 2;
 
-  // 重置滚动位置
+  // 重置滚动位置（仅在从爱心模式切换时）
   if (isHeart) {
     scrollOffset = 0;
   }
 
   // 瀑布流仍然使用原始的200张图片
   imageIds.forEach((id, i) => {
-  // 优先使用瀑布流专用图片
-  let img = loadedImages.get(`stream_${id}`);
-  
-  if (!img) {
-    // 如果没有专用图片，使用原始图片
-    img = loadedImages.get(id) || new Image();
-    img.src = `${FULL_BASE}${formatImageName(id)}.jpg`;
-    loadedImages.set(id, img);
-  }
-  
-  if (img.complete && img.naturalHeight !== 0) {
-    drawStreamImage(img, id, i, startX);
-  } else {
-    img.onload = () => {
+    // 优先使用瀑布流专用图片
+    let img = loadedImages.get(`stream_${id}`);
+    
+    if (!img) {
+      // 如果没有专用图片，使用原始图片
+      img = loadedImages.get(id) || new Image();
+      img.src = `${FULL_BASE}${formatImageName(id)}.jpg`;
+      loadedImages.set(id, img);
+    }
+    
+    if (img.complete && img.naturalHeight !== 0) {
       drawStreamImage(img, id, i, startX);
-    };
+    } else {
+      img.onload = () => {
+        drawStreamImage(img, id, i, startX);
+      };
+    }
+  })};
+
+  // 检查是否需要重新启动自动滚动
+  checkAndRestartAutoScroll();
+
+// === 新增：开始自动滚动 ===
+function startAutoScroll() {
+  if (autoScrollAnimationId) {
+    cancelAnimationFrame(autoScrollAnimationId);
+    autoScrollAnimationId = null;
   }
-});
+  
+  autoScrollEnabled = true;
+  let lastTime = null;
+  
+  function autoScrollAnimate(currentTime) {
+    if (!lastTime) lastTime = currentTime;
+    
+    // 计算时间差（秒）
+    const deltaTime = (currentTime - lastTime) / 1000;
+    lastTime = currentTime;
+    
+    // 更新滚动位置
+    scrollOffset += autoScrollSpeed * deltaTime;
+    
+    // 限制最大滚动
+    const maxScroll = Math.max(...columnHeights) - canvas.height;
+    if (scrollOffset > maxScroll) {
+      scrollOffset = maxScroll;
+      autoScrollEnabled = false; // 滚动到底部后停止
+    }
+    
+    if (scrollOffset < 0) {
+      scrollOffset = 0;
+    }
+    
+    // 重新渲染
+    renderStream();
+    
+    // 如果启用了自动滚动且未到底部，继续动画
+    if (autoScrollEnabled && scrollOffset < maxScroll) {
+      autoScrollAnimationId = requestAnimationFrame(autoScrollAnimate);
+    } else {
+      autoScrollAnimationId = null;
+      autoScrollEnabled = false;
+    }
+  }
+  
+  // 开始自动滚动
+  autoScrollAnimationId = requestAnimationFrame(autoScrollAnimate);
+}
+
+// === 新增：停止自动滚动 ===
+function stopAutoScroll() {
+  autoScrollEnabled = false;
+  if (autoScrollAnimationId) {
+    cancelAnimationFrame(autoScrollAnimationId);
+    autoScrollAnimationId = null;
+  }
+}
+
+// === 新增：检查并重启自动滚动 ===
+function checkAndRestartAutoScroll() {
+  const currentTime = Date.now();
+  const timeSinceLastManualScroll = currentTime - lastManualScrollTime;
+  
+  // 如果已经超过3秒且没有自动滚动，重新启动自动滚动
+  if (!autoScrollEnabled && !isHeart && timeSinceLastManualScroll > autoScrollDelay) {
+    const maxScroll = Math.max(...columnHeights) - canvas.height;
+    if (scrollOffset < maxScroll) {
+      startAutoScroll();
+    }
+  }
 }
 
 function drawStreamImage(img, id, index, startX) {
@@ -770,10 +883,16 @@ function drawStreamImage(img, id, index, startX) {
   columnHeights[colIndex] = y + drawHeight + gap / 2;
 }
 
-// 滚轮事件
+// === 修改：滚轮事件 - 处理手动滚动和自动滚动暂停 ===
 canvas.addEventListener('wheel', (e) => {
   e.preventDefault();
   if (!isHeart) {
+    // 记录手动滚动时间
+    lastManualScrollTime = Date.now();
+    
+    // 停止自动滚动
+    stopAutoScroll();
+    
     scrollOffset += e.deltaY * 0.5;
     if (scrollOffset < 0) scrollOffset = 0;
     
@@ -785,20 +904,252 @@ canvas.addEventListener('wheel', (e) => {
   }
 });
 
-// === 修改：点击切换 - 管理动画循环 ===
+// === 修改：从瀑布流切换回爱心模式的处理 ===
+// 修改点击切换事件中从瀑布流切回爱心模式的部分
+// 在 canvas.addEventListener('click', ...) 的 else 分支中添加停止自动滚动
 canvas.addEventListener('click', () => {
-  isHeart = !isHeart;
-  document.querySelector('.status').textContent = isHeart 
-    ? '点击切换：爱心图云 ↔ 图片流' 
-    : '点击恢复爱心图云';
+  // 如果正在执行缩放淡出动画，不处理点击
+  if (isZoomOutTransition) return;
   
   if (isHeart) {
-    // 切换到爱心模式，开始动画循环（包含海浪效果）
+    // 从爱心图云切换到瀑布流：先执行缩放淡出动画
+    startZoomOutTransition();
+  } else {
+    // 从瀑布流切换回爱心图云：直接切换
+    isHeart = !isHeart;
+    document.querySelector('.status').textContent = isHeart 
+      ? '' 
+      : '';
+    
+    if (isHeart) {
+      // 切换到爱心模式，开始动画循环（包含海浪效果）
+      stopAutoScroll(); // 停止自动滚动
+      startHeartAnimation();
+    } else {
+      // 切换到瀑布流模式，停止动画循环
+      stopHeartAnimation();
+      renderStream();
+      // 立即开始自动滚动
+      setTimeout(() => {
+        startAutoScroll();
+      }, 100);
+    }
+  }
+});
+// === 新增：缩放淡出动画相关变量 ===
+let isZoomOutTransition = false;
+let zoomOutAnimationId = null;
+let zoomOutStartTime = 0;
+let zoomOutProgress = 0;
+const zoomOutDuration = 3500; // 缩放淡出动画持续3秒
+
+// === 新增：启动缩放淡出动画 ===
+function startZoomOutTransition() {
+  isZoomOutTransition = true;
+  zoomOutStartTime = Date.now();
+  zoomOutProgress = 0;
+  
+  // 停止当前的爱心图云动画
+  if (waveAnimationId) {
+    cancelAnimationFrame(waveAnimationId);
+    waveAnimationId = null;
+  }
+  
+  // 开始缩放淡出动画
+  zoomOutAnimationId = requestAnimationFrame(animateZoomOut);
+  
+  // 更新状态文字
+  document.querySelector('.status').textContent = '进入回忆之河';
+}
+
+// === 新增：缩放淡出动画主函数 ===
+function animateZoomOut() {
+  const currentTime = Date.now();
+  const elapsed = currentTime - zoomOutStartTime;
+  
+  // 计算动画进度（0到1）
+  zoomOutProgress = Math.min(elapsed / zoomOutDuration, 1);
+  
+  // 使用缓动函数让动画更自然
+  const easeProgress = zoomOutEasing(zoomOutProgress);
+  
+  // 渲染缩放淡出效果
+  renderZoomOut(easeProgress);
+  
+  if (zoomOutProgress < 1) {
+    // 继续动画
+    zoomOutAnimationId = requestAnimationFrame(animateZoomOut);
+  } else {
+    // 动画完成，切换到瀑布流
+    endZoomOutTransition();
+  }
+}
+
+// === 新增：缩放淡出缓动函数 ===
+function zoomOutEasing(t) {
+  // 前60%用于放大，后40%用于淡出
+  if (t < 0.6) {
+    // 放大阶段：缓入缓出
+    return t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
+  } else {
+    // 淡出阶段：线性
+    return 0.8 + (t - 0.6) * 0.5; // 从0.8到1的线性过渡
+  }
+}
+
+// === 新增：渲染缩放淡出效果 ===
+function renderZoomOut(progress) {
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  
+  // 计算缩放比例（从1到2.5）
+  let scale = 1;
+  let opacity = 1;
+  
+  if (progress < 0.6) {
+    // 放大阶段：从1倍放大到2.5倍
+    const zoomProgress = progress / 0.6;
+    scale = 1 + zoomProgress * 1.5; // 1 -> 2.5
+    
+    // 放大同时保持全透明度
+    opacity = 1;
+  } else {
+    // 淡出阶段：保持最大缩放，透明度从1降到0
+    const fadeProgress = (progress - 0.6) / 0.4;
+    scale = 2.5; // 保持最大缩放
+    opacity = 1 - fadeProgress; // 1 -> 0
+    
+    // 在最后阶段可以添加白色淡出
+    if (fadeProgress > 0.7) {
+      ctx.save();
+      ctx.globalAlpha = (fadeProgress - 0.7) * 3.333; // 0到1的透明度
+      ctx.fillStyle = 'white';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.restore();
+    }
+  }
+  
+  // 生成心脏点
+  const points = generateHeartPoints(heartImageIndices.length);
+  const centerX = canvas.width / 2;
+  const centerY = canvas.height / 2;
+  
+  // 保存画布状态
+  ctx.save();
+  
+  // 应用整体透明度
+  ctx.globalAlpha = opacity;
+  
+  // 绘制图片，应用缩放效果
+  heartImageIndices.forEach((id, i) => {
+    const point = points[i];
+    if (!point) return;
+    
+    // 计算相对于中心点的偏移
+    const offsetX = point.x - centerX;
+    const offsetY = point.y - centerY;
+    
+    // 应用缩放
+    const scaledX = centerX + offsetX * scale;
+    const scaledY = centerY + offsetY * scale;
+    
+    // 如果图片已加载，直接绘制
+    if (loadedImages.has(id)) {
+      const img = loadedImages.get(id);
+      drawImageAtPointForZoomOut(img, { x: scaledX, y: scaledY }, progress, scale);
+    }
+  });
+  
+
+  
+  ctx.restore();
+}
+
+// === 新增：缩放淡出期间绘制图片 ===
+function drawImageAtPointForZoomOut(img, point, progress, scale) {
+  // 基础大小
+  const baseMaxWidth = 20;
+  let maxWidth = baseMaxWidth;
+  
+  // 在放大阶段，图片也稍微放大
+  if (progress < 0.6) {
+    maxWidth = baseMaxWidth * (1 + (scale - 1) * 0.3); // 图片放大30%的缩放比例
+  }
+  
+  const imgScale = Math.min(maxWidth / img.width, 1);
+  const drawWidth = img.width * imgScale;
+  const drawHeight = img.height * imgScale;
+  
+  // 在淡出阶段，图片也淡出
+  let alpha = 1;
+  if (progress > 0.6) {
+    const fadeProgress = (progress - 0.6) / 0.4;
+    alpha = 1 - fadeProgress;
+  }
+  
+  ctx.save();
+  ctx.globalAlpha = alpha;
+  
+  ctx.drawImage(
+    img, 
+    point.x - drawWidth / 2, 
+    point.y - drawHeight / 2, 
+    drawWidth, 
+    drawHeight
+  );
+  
+  ctx.restore();
+}
+
+// === 新增：结束缩放淡出动画，切换到瀑布流 ===
+// === 修改：结束缩放淡出动画，切换到瀑布流 ===
+function endZoomOutTransition() {
+  // 动画完成，切换到瀑布流模式
+  isHeart = false;
+  isZoomOutTransition = false;
+  
+  // 更新状态文字
+  document.querySelector('.status').textContent = '';
+  
+  // 清理缩放淡出动画
+  if (zoomOutAnimationId) {
+    cancelAnimationFrame(zoomOutAnimationId);
+    zoomOutAnimationId = null;
+  }
+  
+  // 渲染瀑布流
+  renderStream();
+  
+  // 切换到瀑布流后立即开始自动滚动
+  setTimeout(() => {
+    startAutoScroll();
+  }, 100); // 延迟100ms确保渲染完成
+}
+
+// === 修改：窗口大小改变时重置 ===
+window.addEventListener('resize', () => {
+  canvas.width = window.innerWidth * 0.8;
+  canvas.height = window.innerHeight * 0.8;
+  
+  // 清除爱心点缓存，因为画布大小改变了
+  heartPoints = null;
+  
+  // 如果正在缩放淡出动画中，重新开始动画
+  if (isZoomOutTransition) {
+    if (zoomOutAnimationId) {
+      cancelAnimationFrame(zoomOutAnimationId);
+    }
+    startZoomOutTransition();
+  } else if (isHeart) {
     startHeartAnimation();
   } else {
-    // 切换到瀑布流模式，停止动画循环
-    stopHeartAnimation();
+    // 停止当前自动滚动
+    stopAutoScroll();
+    // 重新渲染瀑布流
     renderStream();
+    // 重新开始自动滚动
+    setTimeout(() => {
+      startAutoScroll();
+    }, 100);
   }
 });
 
